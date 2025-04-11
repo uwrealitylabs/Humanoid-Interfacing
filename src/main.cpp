@@ -1,7 +1,12 @@
 #include <SimpleFOC.h>
 #include <Wire.h>
 #include <math.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
+const char* ssid = "LIVINGBasics_Smart_Temp_Kettle";
+const char* password = "oldHag1984";
 
 // BLDC motor & driver instance
 // BLDCMotor motor = BLDCMotor(pole pair number);
@@ -25,18 +30,61 @@ MagneticSensorI2C magnetic_encoder = MagneticSensorI2C(AS5600_I2C);
 
 //target variable
 float target_velocity = 0;
+float target_angle = 0;
 
 // instantiate the commander
 Commander command = Commander(Serial);
-void doTarget(char* cmd) { command.scalar(&target_velocity, cmd); }
+void doTarget(char* cmd) { 
+  command.scalar(&target_velocity, cmd);
+  motor.controller = MotionControlType::velocity_openloop; 
+  target_velocity = target_velocity;
+}
 void doLimit(char* cmd) { command.scalar(&motor.voltage_limit, cmd); }
 void doMotor(char* cmd) { command.motor(&motor, cmd); }
+void doAngleTarget(char* cmd) {
+  command.scalar(&target_angle, cmd);
+  motor.controller = MotionControlType::angle;
+  target_velocity = target_angle;
+}
+
+
 
 
 void setup() {
 
   // use monitoring with serial 
   Serial.begin(115200);
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname("ESP32-BLDC");
+
+  WiFi.begin(ssid, password);
+
+
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+    Serial.println("CONNECTING");
+  }
+  Serial.println("CONNECTED");
+
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { 
+
+          type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+
+  ArduinoOTA.begin();
+  Serial.println("Ready");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+
+
   motor.useMonitoring(Serial);
   
   motor2.useMonitoring(Serial);
@@ -92,7 +140,7 @@ void setup() {
   motor.current_limit = 0.2;
  
   // open loop control config
-  motor.controller = MotionControlType::velocity;
+  motor.controller = MotionControlType::velocity_openloop;
 
   motor2.voltage_limit = 4;   // [V]
   motor2.current_limit = 0.2;
@@ -115,6 +163,8 @@ void setup() {
   command.add('T', doTarget, "target velocity");
   command.add('L', doLimit, "voltage limit");
   command.add('M',doMotor,"motor");
+  command.add('A',doAngleTarget,"angle");
+
 
   Serial.println("Motor ready!");
 
@@ -141,13 +191,15 @@ void loop() {
 
  //Serial.println(magnetic_encoder.getAngle());
 
-    motor.loopFOC();
-    motor2.loopFOC();
+  ArduinoOTA.handle();
 
-    motor.move(target_velocity);
-    motor2.move(target_velocity);
+  motor.loopFOC();
+  motor2.loopFOC();
 
-    motor.monitor();
+  motor.move(target_velocity);
+  motor2.move(target_velocity);
+
+  motor.monitor();
 
   //Serial.println(magnetic_encoder.getVelocity());
 
